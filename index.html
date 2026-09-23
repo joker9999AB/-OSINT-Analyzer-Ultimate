@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSINT Analyzer Ultimate</title>
+
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css">
+<link rel="stylesheet"
+      href="https://unpkg.com/vis-network/styles/vis-network.min.css">
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #121212;
+    color: #fff;
+}
+
+.container {
+    max-width: 1400px;
+}
+
+#resultMap {
+    border: 2px solid #333;
+    height: 700px;
+    margin-top: 20px;
+    background: #1e1e1e;
+    border-radius: 12px;
+    position: relative;
+}
+
+#results {
+    background: #222;
+    padding: 15px;
+    border-radius: 10px;
+    max-height: 420px;
+    overflow: auto;
+    color: #eee;
+    font-size: 14px;
+}
+
+#status {
+    min-height: 24px;
+    margin-top: 10px;
+}
+
+.tooltip-custom {
+    position: fixed;
+    background: rgba(0, 0, 0, 0.92);
+    color: #fff;
+    padding: 12px;
+    border-radius: 8px;
+    max-width: 450px;
+    font-size: 14px;
+    display: none;
+    z-index: 1000;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+    direction: ltr;
+    text-align: left;
+    word-break: break-word;
+}
+
+.result-card {
+    background: #1e1e1e;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid #444;
+    direction: ltr;
+}
+
+.result-card img {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex: 0 0 50px;
+}
+
+.result-card .info {
+    flex: 1;
+    min-width: 0;
+}
+
+.result-card .info .title {
+    font-weight: bold;
+    color: #ffc107;
+    word-break: break-word;
+}
+
+.result-card .info .link {
+    font-size: 12px;
+    color: #6cf;
+    word-break: break-all;
+    margin-top: 4px;
+}
+
+.result-card .info .type {
+    font-size: 12px;
+    color: #fff;
+    background: #444;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 4px;
+    display: inline-block;
+}
+
+.result-card button {
+    background: #ff9800;
+    border: none;
+    color: #000;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.result-card button:hover {
+    background: #ffc107;
+}
+
+.empty-message {
+    padding: 40px 20px;
+    text-align: center;
+    color: #dc3545;
+}
+
+#searchButton:disabled {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+/* مؤشر واضح للأيقونات التي يمكن فتحها */
+.network-clickable-hint {
+    text-align: center;
+    color: #aaa;
+    font-size: 13px;
+    margin-top: 8px;
+}
+</style>
+</head>
+
+<body>
+<div class="container mt-4">
+    <h2 class="text-center mb-3">🔍 OSINT Analyzer Ultimate</h2>
+
+    <form id="searchForm" class="p-3 bg-dark rounded mt-3">
+        <div class="input-group mb-2" dir="ltr">
+            <input
+                type="text"
+                id="queryInput"
+                class="form-control"
+                placeholder="ادخل اسم الشخص او الشركة ..."
+                required
+                autocomplete="off"
+            >
+            <button id="searchButton" type="submit" class="btn btn-warning">
+                <i class="fa-solid fa-magnifying-glass"></i> بحث
+            </button>
+        </div>
+
+        <div class="input-group" dir="rtl">
+            <label class="input-group-text" for="depthSelect">عمق البحث</label>
+            <select id="depthSelect" class="form-select">
+                <option value="1">1 صفحة</option>
+                <option value="2" selected>2 صفحات</option>
+                <option value="3">3 صفحات</option>
+                <option value="5">5 صفحات</option>
+            </select>
+        </div>
+
+        <div id="status" class="text-center"></div>
+    </form>
+
+    <div id="resultMap">
+        <div class="empty-message text-secondary">
+            أدخل كلمة البحث ثم اضغط «بحث»
+        </div>
+    </div>
+    <div class="network-clickable-hint">انقر على أيقونة أي نتيجة في الخريطة لفتح رابط الصفحة أو الموقع.</div>
+
+    <div class="mt-4 p-3 bg-dark rounded">
+        <h4><i class="fa-solid fa-list"></i> النتائج</h4>
+        <div id="results"></div>
+    </div>
+</div>
+
+<div id="tooltip" class="tooltip-custom"></div>
+
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+
+<script>
+const tooltip = document.getElementById("tooltip");
+const resultMap = document.getElementById("resultMap");
+const resultsContainer = document.getElementById("results");
+const statusBox = document.getElementById("status");
+const searchButton = document.getElementById("searchButton");
+
+const FALLBACK_IMAGE =
+    "https://cdn-icons-png.flaticon.com/512/565/565547.png";
+
+let network = null;
+
+document.getElementById("searchForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+
+    const query = document.getElementById("queryInput").value.trim();
+    const depth = document.getElementById("depthSelect").value;
+
+    if (!query) return;
+
+    searchButton.disabled = true;
+    statusBox.className = "text-center text-warning";
+    statusBox.textContent = "جاري البحث...";
+    resultsContainer.innerHTML = "";
+    resultMap.innerHTML = "";
+
+    try {
+        const form = new FormData();
+        form.append("query", query);
+        form.append("depth", depth);
+
+        const response = await fetch("/search", {
+            method: "POST",
+            body: form
+        });
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+            throw new Error(payload.error || "فشل الطلب إلى الخادم");
+        }
+
+        const data = Array.isArray(payload) ? payload : (payload.results || []);
+
+        renderResults(data);
+        renderGraph(data, query);
+
+        statusBox.className = data.length
+            ? "text-center text-success"
+            : "text-center text-danger";
+
+        statusBox.textContent = data.length
+            ? `تم العثور على ${data.length} نتيجة`
+            : "لم يتم العثور على نتائج";
+    } catch (error) {
+        console.error(error);
+
+        statusBox.className = "text-center text-danger";
+        statusBox.textContent = error.message || "حدث خطأ غير متوقع";
+
+        resultsContainer.innerHTML = "";
+        resultMap.innerHTML =
+            "<div class='empty-message'>" +
+            "حدث خطأ أثناء البحث. راجع الطرفية التي تشغل Flask لمعرفة التفاصيل." +
+            "</div>";
+    } finally {
+        searchButton.disabled = false;
+    }
+});
+
+
+function renderResults(data) {
+    resultsContainer.innerHTML = "";
+
+    if (!data || data.length === 0) {
+        resultsContainer.innerHTML =
+            "<div class='text-center text-secondary p-3'>لا توجد نتائج لعرضها.</div>";
+        return;
+    }
+
+    const types = {};
+
+    data.forEach(result => {
+        const type = result.type || "Websites";
+        if (!types[type]) types[type] = [];
+        types[type].push(result);
+    });
+
+    Object.keys(types).forEach(type => {
+        const heading = document.createElement("div");
+        heading.className = "fw-bold text-warning mt-2 mb-2";
+        heading.textContent = type;
+        resultsContainer.appendChild(heading);
+
+        types[type].forEach(result => {
+            const card = document.createElement("div");
+            card.className = "result-card";
+
+            const img = document.createElement("img");
+            img.src = result.image || FALLBACK_IMAGE;
+            img.alt = "";
+
+            const info = document.createElement("div");
+            info.className = "info";
+
+            const title = document.createElement("div");
+            title.className = "title";
+            title.textContent = result.title || "بدون عنوان";
+
+            const link = document.createElement("div");
+            link.className = "link";
+            link.textContent = result.link || "";
+
+            const typeBadge = document.createElement("div");
+            typeBadge.className = "type";
+            typeBadge.textContent = result.type || "Websites";
+
+            info.appendChild(title);
+            info.appendChild(link);
+            info.appendChild(typeBadge);
+
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = "فتح";
+
+            btn.addEventListener("click", () => {
+                if (result.link) {
+                    window.open(result.link, "_blank", "noopener,noreferrer");
+                }
+            });
+
+            card.appendChild(img);
+            card.appendChild(info);
+            card.appendChild(btn);
+            resultsContainer.appendChild(card);
+        });
+    });
+}
+
+
+function renderGraph(data, queryName) {
+    tooltip.style.display = "none";
+
+    if (network) {
+        network.destroy();
+        network = null;
+    }
+
+    resultMap.innerHTML = "";
+
+    if (!data || data.length === 0) {
+        resultMap.innerHTML =
+            "<div class='empty-message'>لا توجد نتائج لرسم الخريطة.</div>";
+        return;
+    }
+
+    const normalized = data.map(r => ({
+        title: r.title || "بدون عنوان",
+        link: r.link || "",
+        image: r.image || null,
+        type: r.type || "Websites"
+    }));
+
+    const nodes = [];
+    const edges = [];
+    let nid = 2;
+
+    nodes.push({
+        id: 1,
+        label: queryName,
+        shape: "box",
+        color: {
+            background: "#ffc107",
+            border: "#ffc107",
+            highlight: {
+                background: "#ffd54f",
+                border: "#ffc107"
+            }
+        },
+        font: {
+            color: "#000",
+            size: 18
+        },
+        title: "نتائج البحث"
+    });
+
+    const typeGroups = {};
+
+    normalized.forEach(r => {
+        if (!typeGroups[r.type]) typeGroups[r.type] = [];
+        typeGroups[r.type].push(r);
+    });
+
+    const icons = {
+        "Twitter": ["#1DA1F2", "https://cdn-icons-png.flaticon.com/512/733/733579.png"],
+        "Facebook": ["#4267B2", "https://cdn-icons-png.flaticon.com/512/733/733547.png"],
+        "Instagram": ["#E1306C", "https://cdn-icons-png.flaticon.com/512/2111/2111463.png"],
+        "YouTube": ["#FF0000", "https://cdn-icons-png.flaticon.com/512/1384/1384060.png"],
+        "Telegram": ["#0088cc", "https://cdn-icons-png.flaticon.com/512/2111/2111646.png"],
+        "LinkedIn": ["#0077B5", "https://cdn-icons-png.flaticon.com/512/174/174857.png"],
+        "WhatsApp": ["#25D366", "https://cdn-icons-png.flaticon.com/512/733/733585.png"],
+        "GitHub": ["#333", "https://cdn-icons-png.flaticon.com/512/733/733553.png"],
+        "Reddit": ["#FF4500", "https://cdn-icons-png.flaticon.com/512/2111/2111581.png"],
+        "TikTok": ["#69C9D0", "https://cdn-icons-png.flaticon.com/512/3046/3046121.png"],
+        "Websites": ["#6cf", FALLBACK_IMAGE],
+        "Official Sites": ["#6cf", FALLBACK_IMAGE],
+        "News Sites": ["#ff7043", FALLBACK_IMAGE],
+        "Emails": ["#FF9800", "https://cdn-icons-png.flaticon.com/512/561/561127.png"],
+        "Phone Numbers": ["#4CAF50", "https://cdn-icons-png.flaticon.com/512/15/15874.png"],
+        "Udemy": ["#A435F0", FALLBACK_IMAGE],
+        "Coursera": ["#0056D2", FALLBACK_IMAGE]
+    };
+
+    Object.keys(typeGroups).forEach(type => {
+        const typeId = nid++;
+        const [color, icon] =
+            icons[type] || ["#6cf", FALLBACK_IMAGE];
+
+        nodes.push({
+            id: typeId,
+            label: `${type} (${typeGroups[type].length})`,
+            shape: "image",
+            image: icon,
+            size: 35,
+            font: { color: "#fff" },
+            title: `تصنيف: ${type}`
+        });
+
+        edges.push({
+            from: 1,
+            to: typeId,
+            arrows: { to: { enabled: true, scaleFactor: 1.5 } },
+            smooth: true,
+            length: 280
+        });
+
+        typeGroups[type].forEach(result => {
+            const id = nid++;
+
+            nodes.push({
+                id: id,
+                label: result.title.substring(0, 45),
+                shape: "image",
+                image: result.image || icon,
+                size: 28,
+                font: { color: "#fff" },
+                title:
+                    `${result.title}\n` +
+                    `${result.link}\n` +
+                    `نوع: ${result.type}\n` +
+                    `اضغط على الأيقونة لفتح الرابط`,
+                url: result.link
+            });
+
+            edges.push({
+                from: typeId,
+                to: id,
+                arrows: { to: { enabled: true } },
+                dashes: true,
+                smooth: { type: "cubicBezier" },
+                length: 190
+            });
+        });
+    });
+
+    network = new vis.Network(
+        resultMap,
+        {
+            nodes: new vis.DataSet(nodes),
+            edges: new vis.DataSet(edges)
+        },
+        {
+            autoResize: true,
+            height: "100%",
+            physics: {
+                enabled: true,
+                stabilization: {
+                    iterations: 250,
+                    fit: true
+                },
+                barnesHut: {
+                    gravitationalConstant: -8500,
+                    centralGravity: 0.25,
+                    springLength: 240,
+                    springConstant: 0.04,
+                    damping: 0.12
+                }
+            },
+            interaction: {
+                hover: true,
+                zoomView: true,
+                dragView: true,
+                navigationButtons: true
+            }
+        }
+    );
+
+    // عند الضغط على أيقونة نتيجة لها رابط، افتح الصفحة في تبويب جديد.
+    // عقد التصنيفات والعقدة الرئيسية لا تحتوي على روابط، لذلك لا يحدث شيء عند الضغط عليها.
+    network.on("click", function (params) {
+        if (!params.nodes || params.nodes.length === 0) return;
+
+        const nodeId = params.nodes[0];
+        const node = network.body.data.nodes.get(nodeId);
+        const url = node && node.url;
+
+        if (url && /^https?:\/\//i.test(url)) {
+            window.open(url, "_blank", "noopener,noreferrer");
+        }
+    });
+
+    network.on("hoverNode", function (params) {
+        const node = network.body.data.nodes.get(params.node);
+        tooltip.textContent = node?.title || node?.label || "";
+        tooltip.style.display = "block";
+
+        const event = params.event?.srcEvent || params.event;
+        if (event) {
+            tooltip.style.left = `${event.clientX + 12}px`;
+            tooltip.style.top = `${event.clientY + 12}px`;
+        }
+    });
+
+    network.on("blurNode", function () {
+        tooltip.style.display = "none";
+    });
+
+    network.on("dragStart", function () {
+        tooltip.style.display = "none";
+    });
+}
+</script>
+</body>
+</html>
